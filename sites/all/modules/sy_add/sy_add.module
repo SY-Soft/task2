@@ -1,0 +1,247 @@
+<?php
+function sy_add_menu()
+{
+
+    $items['sy_add/autocomplete_client'] = array(
+        'page callback' => 'sy_add_autocomplete_client',
+        'access arguments' => array('access content'),
+        'type' => MENU_CALLBACK,
+    );
+    $items['change/%node'] = array(
+        'page callback' => 'sy_add_change',
+        'page arguments' => array(1, 2),
+        'access arguments' => array('administer content'),
+        'type' => MENU_CALLBACK,
+    );
+
+    return $items;
+}
+
+function sy_add_autocomplete_client($string)
+{
+    $result = db_select('node', 'n')
+        ->fields('n', array('nid', 'title'))
+        ->condition('type', 'client')
+        ->condition('title', '%' . db_like($string) . '%', 'LIKE')
+        ->range(0, 10)
+        ->execute();
+
+    $matches = array();
+    foreach ($result as $row) {
+        $matches[check_plain($row->title) . ' [' . $row->nid . ']'] = check_plain($row->title);
+    }
+
+    drupal_json_output($matches);
+}
+
+function sy_add_tasks_header()
+{
+    $form = drupal_get_form('sy_add_task_create_form');
+    $out = '<div class="panel panel-primary">
+            <div class="panel-heading">  <button class="btn btn-info" type="button" data-toggle="collapse" data-target="#collapseExample" aria-expanded="false" aria-controls="collapseExample">
+            ' . t('Добавить задачу') . '
+            </button></div>
+            <div class="collapse" id="collapseExample"> <div class="panel-body">
+            ' . drupal_render($form) . '
+            </div>
+            </div>
+            </div>';
+    return $out;
+}
+
+function sy_add_task_create_form($form, &$form_state)
+{
+    $form['client_type'] = array(
+        '#type' => 'radios',
+        '#title' => t('Клиент'),
+        '#default_value' => 0,
+        '#options' => array(0 => t('Существующий'), 1 => t('Новый'))
+    );
+    $form['clnt_exist'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Существующий клиент'),
+        '#collapsible' => FALSE,
+        '#states' => array(
+            'invisible' => array(
+                ':input[name="client_type"]' => array('value' => 1),
+            ),
+        ),
+    );
+    $form['clnt_exist']['client'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Клиент'),
+        '#autocomplete_path' => 'sy_add/autocomplete_client',
+        '#description' => t('Введите ФИО или телефон')
+    );
+    $form['clnt_new'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Новый клиент'),
+        '#collapsible' => FALSE,
+        '#states' => array(
+            'invisible' => array(
+                ':input[name="client_type"]' => array('value' => 0),
+            ),
+        ),
+    );
+    $form['clnt_new']['fio'] = array(
+        '#type' => 'textfield',
+        '#title' => t('ФИО'),
+        '#size' => 32,
+        '#maxlength' => 32,
+    );
+    $form['clnt_new']['phone'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Телефон'),
+        '#size' => 32,
+        '#maxlength' => 32,
+    );
+    $form['title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Краткое описание'),
+    );
+    $form['body'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Задача'),
+    );
+    $form['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Создать'), '#weight' => 50,
+    );
+    return $form;
+}
+
+function sy_add_task_create_form_validate(&$form, &$form_state)
+{
+    $values = $form_state['values'];
+    if ($values['client_type'] == 0) {
+        $client_id = 0;
+        $tmp = explode('[', trim($values['client']));
+        if (count($tmp) == 2) $client_id = (int)substr($tmp[1], 0, strlen($tmp[1]) - 1);
+        if ($client_id == 0) form_set_error('client', t('Не найден клиент'));
+    } else {
+        if (strlen(trim($values['fio'])) < 5) form_set_error('fio', t('Введите ФИО (мин 5)'));
+        if (strlen(trim($values['phone'])) < 10) form_set_error('phone', t('Введите телефон (мин 10)'));
+    }
+    if (strlen(trim($values['title'])) < 10) form_set_error('title', t('Введите краткое описание (мин 10)'));
+    if (strlen(trim($values['body'])) < 10) form_set_error('body', t('Введите задачу (мин 10)'));
+
+}
+
+function sy_add_task_create_form_submit($form, &$form_state)
+{
+
+    $values = $form_state['values'];
+    if ($values['client_type'] == 1) {
+        $client_id = sy_add_node_create('client', array('fio' => $values['fio'], 'phone' => $values['phone']));
+    } else {
+        $client_id = 0;
+        $tmp = explode('[', trim($values['client']));
+        if (count($tmp) == 2) $client_id = (int)substr($tmp[1], 0, strlen($tmp[1]) - 1);
+    }
+    $client = sy_add_node_create('task', array('body' => $values['body'], 'title' => check_plain($values['title']), 'client' => $client_id));
+    dsm($values);
+}
+
+function sy_add_node_create($type, $values)
+{
+    global $user;
+    $node = new stdClass();
+    $node->type = $type;
+    node_object_prepare($node);
+    $node->title = $type == 'client' ? $values['fio'] . ' (' . $values['phone'] . ')' : $values['title'];
+    $node->language = LANGUAGE_NONE;
+    if ($type == 'client') {
+        $node->field_fio[LANGUAGE_NONE][0]['value'] = $values['fio'];
+        $node->field_phone[LANGUAGE_NONE][0]['value'] = $values['phone'];
+    } else {
+        $node->body[LANGUAGE_NONE][0]['value'] = $values['body'];
+        $node->body[LANGUAGE_NONE][0]['format'] = 'plain_text';
+        $node->field_ref_client[LANGUAGE_NONE][0]['target_id'] = $values['client'];
+        $node->field_status[LANGUAGE_NONE][0]['value'] = 'new';
+
+    }
+    $node->uid = $user->uid;
+    $node->status = 1;
+    node_save($node);
+    return $node->nid;
+}
+
+function sy_add_form_task_node_form_alter(&$form, &$form_state, $form_id)
+{
+    global $user;
+    if ($user->uid != 1) {
+        $form['field_time_close']['#states'] = array(
+            'visible' => array(
+                '#edit-field-status-und' => array('value' => "closed"),
+            ));
+        if ((int)$form['nid']['#value'] < 1) unset($form['field_status']['und']['#options']['closed']);
+    }
+}
+
+function sy_add_get_results($results)
+{
+    $arr = array();
+    foreach ($results as $data) {
+        if (isset($data->field_field_status[0]['raw']['value']) && $data->field_field_status[0]['raw']['value'] == 'closed') {
+
+            if (isset($data->field_field_time_process[0]['raw']['value']) && isset($data->field_field_time_close[0]['raw']['value'])) {
+                $arr[] = $data->field_field_time_close[0]['raw']['value'] - $data->field_field_time_process[0]['raw']['value'];
+            }
+        }
+
+    }
+    $out = '';
+    if (count($arr) > 0) {
+        $sum = array_sum($arr) / count($arr);
+        if ($sum > 86400) {
+            $out .= floor($sum / 86400) . 'д. ';
+            $sum = $sum - (floor($sum / 86400) * 86400);
+        }
+        $out .= str_pad(floor($sum / 3600), 2, '0', STR_PAD_LEFT) . ':' . str_pad(floor(($sum - (floor($sum / 3600) * 3600)) / 60), 2, '0', STR_PAD_LEFT);
+        $out = '<p class="well navbar-text navbar-right">Среднее время: ' . $out . '</p>';
+    }
+
+    return $out;
+}
+
+function sy_add_get_op($data)
+{
+    if (isset($data->field_field_status[0]['raw']['value'])) {
+
+        switch ($data->field_field_status[0]['raw']['value']) {
+            case 'new':
+                $out = '<span class="glyphicon glyphicon-flash" style="font-size: 150%; margin: 0 10px; color: red;"></span>'
+                    . l('<span class="glyphicon glyphicon-pushpin "></span>', 'change/' . $data->nid . '/new', array('query' => drupal_get_destination(), 'html' => TRUE));
+                break;
+            case 'in_process':
+                $out = '<span class="glyphicon glyphicon-pushpin" style="font-size: 150%; margin: 0 10px;  color: blue;"></span>'
+                    . l('<span class="glyphicon glyphicon-ok "></span>', 'change/' . $data->nid . '/in_process', array('query' => drupal_get_destination(), 'html' => TRUE));
+                break;
+            case 'closed':
+                $out = '<span class="glyphicon glyphicon-ok" style="font-size: 150%; margin: 0 10px; color: green;"></span>';
+                break;
+        }
+    }
+    return '<span style="min-width: 60px; float: left;">' . $out . '</span>';;
+}
+
+function sy_add_change($node, $op = 'new')
+{
+    global $user;
+    $new_status = 'new';
+    switch ($op) {
+        case 'new':
+            $new_status = 'in_process';
+            $node->field_time_process['und'][0]['value'] = time();
+            break;
+        case 'in_process':
+            $new_status = 'closed';
+            $node->field_time_close['und'][0]['value'] = time();
+            $node->field_uid_closed['und'][0]['target_id'] = $user->uid;
+            break;
+    }
+    $node->field_status['und'][0]['value'] = $new_status;
+    node_save($node);
+    drupal_set_message(t('Новый статус присвоен.'));
+    drupal_goto('tasks', array('query' => drupal_get_destination()));
+}

@@ -1,0 +1,5 @@
+name = "SY ADD"
+description = "SY ADD"
+package = SY-Soft
+core=7.x
+version = "7.x-0.1"
